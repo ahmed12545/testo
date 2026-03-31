@@ -29,7 +29,7 @@ else
       | sudo tee /etc/apt/sources.list.d/ngrok.list \
       && sudo apt update \
       && sudo apt install ngrok -y
-    
+
     if command -v ngrok &> /dev/null; then
         echo "  ✓ ngrok installed successfully"
     else
@@ -77,7 +77,7 @@ else
 fi
 
 source "$VENV_DIR/bin/activate"
-echo "  ✓ Activated: $(which python)"
+echo "  ✓ Activated: $(which python3)"
 
 # ── Install dependencies ────────────────────────────────
 echo ""
@@ -118,7 +118,7 @@ echo ""
 echo "  Starting dashboard..."
 
 cd "$BASE_DIR/xrp-execution-engine/web"
-python app.py > /dev/null 2>&1 &
+python3 app.py > /dev/null 2>&1 &
 WEB_PID=$!
 cd "$BASE_DIR"
 sleep 2
@@ -192,6 +192,6 @@ cleanup() {
 
 trap cleanup INT TERM
 
-python runner.py
+python3 runner.py
 
 cleanup
