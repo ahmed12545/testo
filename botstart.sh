@@ -1,157 +1,197 @@
 #!/bin/bash
 
-# ============================================
-# Ngrok Setup + Hello World Page Hoster
-# ============================================
-
-PORT=8080
-
-echo "========================================="
-echo "  Ngrok Server Setup"
-echo "========================================="
-
-# --- Step 1: Check/Install ngrok ---
+echo "=================================================="
+echo "  XRP Execution Engine — Setup & Run"
+echo "=================================================="
 echo ""
-echo "[1/4] Checking ngrok..."
+
+# ── Base directory = where this script lives ────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$SCRIPT_DIR"
+echo "  Base directory: $BASE_DIR"
+
+# ── Credentials ─────────────────────────────────────────
+read -p "  GitHub token: " GITHUB_TOKEN
+read -p "  GitHub username: " GITHUB_USER
+read -p "  Ngrok auth token: " NGROK_TOKEN
+echo ""
+
+# ── Check/Install ngrok ────────────────────────────────
+echo "  Checking ngrok..."
 
 if command -v ngrok &> /dev/null; then
-    echo "✅ ngrok is already installed."
+    echo "  ✓ ngrok is already installed"
 else
-    echo "❌ ngrok not found. Installing..."
-
+    echo "  Installing ngrok..."
     curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
       | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
       && echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
       | sudo tee /etc/apt/sources.list.d/ngrok.list \
       && sudo apt update \
       && sudo apt install ngrok -y
-
+    
     if command -v ngrok &> /dev/null; then
-        echo "✅ ngrok installed successfully!"
+        echo "  ✓ ngrok installed successfully"
     else
-        echo "❌ Failed to install ngrok. Exiting."
+        echo "  ❌ Failed to install ngrok. Exiting."
         exit 1
     fi
 fi
 
-# --- Step 2: Auth token ---
+ngrok config add-authtoken "$NGROK_TOKEN"
+echo "  ✓ ngrok configured"
 echo ""
-echo "[2/4] Configuring ngrok..."
-echo ""
-echo "Get your token from: https://dashboard.ngrok.com/get-started/your-authtoken"
-echo ""
-read -rp "Enter your ngrok auth token: " AUTH_TOKEN
 
-if [ -z "$AUTH_TOKEN" ]; then
-    echo "❌ Token cannot be empty!"
-    exit 1
-fi
+cd "$BASE_DIR"
 
-ngrok config add-authtoken "$AUTH_TOKEN"
-echo "✅ Token configured!"
+# ── Clone repos ─────────────────────────────────────────
+echo "  Cloning repositories..."
 
-# --- Step 3: Clean port and create page ---
-echo ""
-echo "[3/4] Setting up web page on port $PORT..."
-
-# Kill anything on the port (don't exit if nothing found)
-PID=$(lsof -ti :$PORT 2>/dev/null || true)
-if [ -n "$PID" ]; then
-    echo "Killing process on port $PORT..."
-    kill -9 $PID 2>/dev/null || true
-    sleep 1
-    echo "Port cleared."
+if [ -d "$BASE_DIR/xrp-feature-engine" ]; then
+    echo "  xrp-feature-engine exists, pulling..."
+    cd "$BASE_DIR/xrp-feature-engine" && git pull -q && cd "$BASE_DIR"
 else
-    echo "Port $PORT is free."
+    git clone -q "https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/xrp-feature-engine.git" "$BASE_DIR/xrp-feature-engine"
+fi
+echo "  ✓ xrp-feature-engine"
+
+if [ -d "$BASE_DIR/xrp-execution-engine" ]; then
+    echo "  xrp-execution-engine exists, pulling..."
+    cd "$BASE_DIR/xrp-execution-engine" && git pull -q && cd "$BASE_DIR"
+else
+    git clone -q "https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/xrp-execution-engine.git" "$BASE_DIR/xrp-execution-engine"
+fi
+echo "  ✓ xrp-execution-engine"
+
+# ── Virtual environment ─────────────────────────────────
+echo ""
+echo "  Setting up virtual environment..."
+
+VENV_DIR="$BASE_DIR/venv"
+
+if [ ! -d "$VENV_DIR" ]; then
+    python3 -m venv "$VENV_DIR"
+    echo "  ✓ Created virtual environment"
+else
+    echo "  ✓ Virtual environment exists"
 fi
 
-# Create the page
-mkdir -p /tmp/mysite
+source "$VENV_DIR/bin/activate"
+echo "  ✓ Activated: $(which python)"
 
-cat > /tmp/mysite/index.html <<'HTML'
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Server</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
-            color: white;
-        }
-        .box {
-            text-align: center;
-            padding: 40px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 15px;
-        }
-        h1 { font-size: 2.5em; }
-        p { font-size: 1.2em; opacity: 0.8; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        <h1>✅ Hello World!</h1>
-        <p>Your server is live via ngrok.</p>
-        <p>Accessible from anywhere 🌍</p>
-    </div>
-</body>
-</html>
-HTML
+# ── Install dependencies ────────────────────────────────
+echo ""
+echo "  Installing dependencies..."
 
-echo "✅ Page created."
+pip install --upgrade pip setuptools wheel -q 2>/dev/null
+pip install -e "$BASE_DIR/xrp-feature-engine" -q 2>/dev/null
+pip install -r "$BASE_DIR/xrp-execution-engine/requirements.txt" -q 2>/dev/null
+echo "  ✓ All dependencies installed"
 
-# Start python web server in background
-echo "Starting web server..."
-cd /tmp/mysite
-python3 -m http.server $PORT &
-HTTP_PID=$!
+# ── Check model weights ────────────────────────────────
+echo ""
+echo "  Checking model weights..."
+
+MODELS_DIR="$BASE_DIR/xrp-execution-engine/models"
+ALL_GOOD=1
+
+for f in catboost_balanced.pkl lgbm_conservative.pkl xgb_balanced.pkl feature_columns.json; do
+    if [ -f "$MODELS_DIR/$f" ]; then
+        SIZE=$(du -h "$MODELS_DIR/$f" | cut -f1)
+        echo "  ✓ $f ($SIZE)"
+    else
+        echo "  🔴 MISSING: $f"
+        ALL_GOOD=0
+    fi
+done
+
+if [ "$ALL_GOOD" -eq 0 ]; then
+    echo ""
+    echo "  ⚠️ Some weights missing. Run Kaggle training cell first."
+fi
+
+# ── Set environment ─────────────────────────────────────
+export FEATURE_ENGINE_PATH="$BASE_DIR/xrp-feature-engine"
+
+# ── Start web dashboard silently ────────────────────────
+echo ""
+echo "  Starting dashboard..."
+
+cd "$BASE_DIR/xrp-execution-engine/web"
+python app.py > /dev/null 2>&1 &
+WEB_PID=$!
+cd "$BASE_DIR"
 sleep 2
+echo "  ✓ Dashboard running (PID: $WEB_PID)"
 
-# Verify it started
-if kill -0 $HTTP_PID 2>/dev/null; then
-    echo "✅ Web server running on port $PORT (PID: $HTTP_PID)"
-else
-    echo "❌ Web server failed to start!"
-    exit 1
-fi
-
-# Test it locally
-echo "Testing locally..."
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT 2>/dev/null || true)
-if [ "$RESPONSE" = "200" ]; then
-    echo "✅ Local test passed! (HTTP 200)"
-else
-    echo "⚠️  Local test returned: $RESPONSE (might still work)"
-fi
-
-# --- Step 4: Start ngrok ---
+# ── Start ngrok tunnel ──────────────────────────────────
 echo ""
-echo "[4/4] Starting ngrok tunnel..."
+echo "  Starting ngrok tunnel..."
 
-# Cleanup on exit
+WEB_PORT=$(python3 -c "
+import json, os
+p = os.path.join('$BASE_DIR', 'xrp-execution-engine', 'config', 'settings.json')
+with open(p) as f: print(json.load(f).get('web_port', 8000))
+" 2>/dev/null || echo "8000")
+
+ngrok http $WEB_PORT --log=stdout > /tmp/ngrok.log 2>&1 &
+NGROK_PID=$!
+sleep 3
+
+# Get the public URL from ngrok API
+NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data['tunnels'][0]['public_url'])
+except:
+    print('')
+" 2>/dev/null || true)
+
+if [ -n "$NGROK_URL" ]; then
+    echo "  ✓ ngrok tunnel active (PID: $NGROK_PID)"
+else
+    NGROK_URL="(could not detect — check http://localhost:4040)"
+    echo "  ⚠️ ngrok started but URL not detected yet"
+fi
+
+# ── Summary ─────────────────────────────────────────────
+echo ""
+echo "=================================================="
+echo "  SETUP COMPLETE"
+echo "=================================================="
+echo "  Directory:   $BASE_DIR"
+echo "  Local:       http://localhost:$WEB_PORT"
+echo "  Public:      $NGROK_URL"
+echo "  Password:    $(cat $BASE_DIR/xrp-execution-engine/config/password.txt)"
+echo "=================================================="
+echo ""
+echo "  👉 Open the Public URL on your phone!"
+echo ""
+echo "  Starting engine..."
+echo ""
+
+# ── Start engine (only engine output visible) ───────────
+echo "=================================================="
+echo "  ENGINE OUTPUT"
+echo "=================================================="
+echo ""
+
+cd "$BASE_DIR/xrp-execution-engine/engine"
+
 cleanup() {
     echo ""
-    echo "Shutting down..."
-    kill $HTTP_PID 2>/dev/null || true
-    echo "Done!"
+    echo "  Shutting down..."
+    kill $WEB_PID 2>/dev/null || true
+    kill $NGROK_PID 2>/dev/null || true
+    echo "  ✓ Dashboard stopped"
+    echo "  ✓ Ngrok stopped"
+    echo "  Logs: $BASE_DIR/xrp-execution-engine/logs/"
+    exit 0
 }
-trap cleanup EXIT INT TERM
 
-echo ""
-echo "========================================="
-echo "  Look for the Forwarding URL below"
-echo "  Copy that link to your phone!"
-echo ""
-echo "  Press Ctrl+C to stop everything."
-echo "========================================="
-echo ""
+trap cleanup INT TERM
 
-ngrok http $PORT
+python runner.py
+
+cleanup
