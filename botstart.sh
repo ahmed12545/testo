@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 echo "=================================================="
 echo "  XRP Execution Engine — Setup & Run"
@@ -77,7 +78,7 @@ else
 fi
 
 source "$VENV_DIR/bin/activate"
-echo "  ✓ Activated: $(which python3)"
+echo "  ✓ Activated: $(which python)"
 
 # ── Install dependencies ────────────────────────────────
 echo ""
@@ -118,7 +119,7 @@ echo ""
 echo "  Starting dashboard..."
 
 cd "$BASE_DIR/xrp-execution-engine/web"
-python3 app.py > /dev/null 2>&1 &
+python app.py > /dev/null 2>&1 &
 WEB_PID=$!
 cd "$BASE_DIR"
 sleep 2
@@ -128,7 +129,7 @@ echo "  ✓ Dashboard running (PID: $WEB_PID)"
 echo ""
 echo "  Starting ngrok tunnel..."
 
-WEB_PORT=$(python3 -c "
+WEB_PORT=$(python -c "
 import json, os
 p = os.path.join('$BASE_DIR', 'xrp-execution-engine', 'config', 'settings.json')
 with open(p) as f: print(json.load(f).get('web_port', 8000))
@@ -139,7 +140,7 @@ NGROK_PID=$!
 sleep 3
 
 # Get the public URL from ngrok API
-NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "
+NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
@@ -182,8 +183,8 @@ cd "$BASE_DIR/xrp-execution-engine/engine"
 cleanup() {
     echo ""
     echo "  Shutting down..."
-    kill $WEB_PID 2>/dev/null || true
-    kill $NGROK_PID 2>/dev/null || true
+    kill $WEB_PID 2>/dev/null
+    kill $NGROK_PID 2>/dev/null
     echo "  ✓ Dashboard stopped"
     echo "  ✓ Ngrok stopped"
     echo "  Logs: $BASE_DIR/xrp-execution-engine/logs/"
@@ -192,6 +193,6 @@ cleanup() {
 
 trap cleanup INT TERM
 
-python3 runner.py
+python runner.py
 
 cleanup
