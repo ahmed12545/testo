@@ -2,43 +2,80 @@
 
 LOG="/tmp/bot_output.log"
 SESSION="bot"
-DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$1" in
 
-  start)
-    tmux kill-session -t "$SESSION" 2>/dev/null
-    > "$LOG"
-    tmux new-session -d -s "$SESSION" "cd $DIR && bash ./botstart.sh 2>&1 | tee $LOG"
-    echo "Bot started. Now run:"
-    echo "  ./alive.sh watch    - see everything"
-    echo "  ./alive.sh send XX  - type something"
-    ;;
-
-  send)
-    shift
-    tmux send-keys -t "$SESSION" "$*" Enter
-    ;;
-
   watch)
+    if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "Bot is not running."
+        exit 1
+    fi
     tail -f "$LOG"
     ;;
 
   log)
-    cat "$LOG"
+    if [ -f "$LOG" ]; then
+        cat "$LOG"
+    else
+        echo "No log file found."
+    fi
+    ;;
+
+  links)
+    if [ -f "$LOG" ]; then
+        grep -Eo 'https?://[^ ]+' "$LOG"
+    else
+        echo "No log file found."
+    fi
+    ;;
+
+  send)
+    shift
+    if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "Bot is not running."
+        exit 1
+    fi
+    tmux send-keys -t "$SESSION" "$*" Enter
+    echo "Sent: $*"
+    sleep 1
+    tail -5 "$LOG"
+    ;;
+
+  ctrlc)
+    tmux send-keys -t "$SESSION" C-c
+    echo "Sent Ctrl+C"
+    ;;
+
+  status)
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "Bot tmux session: RUNNING"
+        echo ""
+        echo "Processes:"
+        ps aux | grep -E 'runner.py|app.py|ngrok' | grep -v grep
+    else
+        echo "Bot tmux session: NOT RUNNING"
+    fi
     ;;
 
   stop)
-    tmux kill-session -t "$SESSION"
+    tmux kill-session -t "$SESSION" 2>/dev/null
     echo "Bot killed."
+    # Also kill any leftover processes
+    pkill -f "runner.py" 2>/dev/null
+    pkill -f "app.py" 2>/dev/null
+    pkill -f "ngrok" 2>/dev/null
+    echo "All processes cleaned up."
     ;;
 
   *)
-    echo "./alive.sh start   - start bot"
-    echo "./alive.sh watch   - see ALL output live"
-    echo "./alive.sh log     - dump full log"
-    echo "./alive.sh send X  - send input"
-    echo "./alive.sh stop    - kill bot"
+    echo "Usage:"
+    echo "  ./alive.sh watch    - see engine output live"
+    echo "  ./alive.sh log      - dump full log"
+    echo "  ./alive.sh links    - extract all URLs"
+    echo "  ./alive.sh send X   - send input to bot"
+    echo "  ./alive.sh ctrlc    - send Ctrl+C to bot"
+    echo "  ./alive.sh status   - check if bot is running"
+    echo "  ./alive.sh stop     - kill everything"
     ;;
 
 esac
