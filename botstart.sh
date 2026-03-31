@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 echo "=================================================="
 echo "  XRP Execution Engine — Setup & Run"
@@ -15,6 +14,87 @@ echo "  Base directory: $BASE_DIR"
 read -p "  GitHub token: " GITHUB_TOKEN
 read -p "  GitHub username: " GITHUB_USER
 read -p "  Ngrok auth token: " NGROK_TOKEN
+echo ""
+
+# ── Check/Install system packages ──────────────────────
+echo "  Checking system packages..."
+
+# Get Python version
+PYTHON_VERSION=$(python3 --version 2>/dev/null | awk '{print $2}' | cut -d. -f1,2 || true)
+
+if [ -z "$PYTHON_VERSION" ]; then
+    echo "  ❌ Python3 not found. Installing..."
+    sudo apt update
+    sudo apt install python3 -y
+    PYTHON_VERSION=$(python3 --version | awk '{print $2}' | cut -d. -f1,2)
+fi
+echo "  ✓ Python $PYTHON_VERSION found"
+
+# Check and install python3-venv
+if ! dpkg -l | grep -q "python3-venv\|python${PYTHON_VERSION}-venv"; then
+    echo "  ❌ python3-venv not found. Installing..."
+    sudo apt update
+    sudo apt install python3-venv "python${PYTHON_VERSION}-venv" -y 2>/dev/null || sudo apt install python3-venv -y
+    echo "  ✓ python3-venv installed"
+else
+    echo "  ✓ python3-venv found"
+fi
+
+# Check and install python3-pip
+if ! command -v pip3 &> /dev/null; then
+    echo "  ❌ pip3 not found. Installing..."
+    sudo apt update
+    sudo apt install python3-pip -y
+    echo "  ✓ pip3 installed"
+else
+    echo "  ✓ pip3 found"
+fi
+
+# Check and install python3-dev (needed for some packages like numpy)
+if ! dpkg -l | grep -q "python3-dev\|python${PYTHON_VERSION}-dev"; then
+    echo "  ❌ python3-dev not found. Installing..."
+    sudo apt install python3-dev "python${PYTHON_VERSION}-dev" -y 2>/dev/null || sudo apt install python3-dev -y
+    echo "  ✓ python3-dev installed"
+else
+    echo "  ✓ python3-dev found"
+fi
+
+# Check and install build-essential (needed for compiling some pip packages)
+if ! dpkg -l | grep -q "build-essential"; then
+    echo "  ❌ build-essential not found. Installing..."
+    sudo apt install build-essential -y
+    echo "  ✓ build-essential installed"
+else
+    echo "  ✓ build-essential found"
+fi
+
+# Check and install curl
+if ! command -v curl &> /dev/null; then
+    echo "  ❌ curl not found. Installing..."
+    sudo apt install curl -y
+    echo "  ✓ curl installed"
+else
+    echo "  ✓ curl found"
+fi
+
+# Check and install lsof
+if ! command -v lsof &> /dev/null; then
+    echo "  ❌ lsof not found. Installing..."
+    sudo apt install lsof -y
+    echo "  ✓ lsof installed"
+else
+    echo "  ✓ lsof found"
+fi
+
+# Check and install git
+if ! command -v git &> /dev/null; then
+    echo "  ❌ git not found. Installing..."
+    sudo apt install git -y
+    echo "  ✓ git installed"
+else
+    echo "  ✓ git found"
+fi
+
 echo ""
 
 # ── Check/Install ngrok ────────────────────────────────
@@ -70,15 +150,49 @@ echo "  Setting up virtual environment..."
 
 VENV_DIR="$BASE_DIR/venv"
 
+# If venv exists but is broken, remove it and recreate
+if [ -d "$VENV_DIR" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
+        echo "  ⚠️ Existing venv is broken. Removing..."
+        rm -rf "$VENV_DIR"
+    fi
+fi
+
 if [ ! -d "$VENV_DIR" ]; then
+    echo "  Creating virtual environment..."
     python3 -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo "  ❌ Failed to create venv. Trying with --without-pip..."
+        python3 -m venv --without-pip "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python
+    fi
     echo "  ✓ Created virtual environment"
 else
     echo "  ✓ Virtual environment exists"
 fi
 
+# Verify activation works
+if [ ! -f "$VENV_DIR/bin/activate" ]; then
+    echo "  ❌ venv activate script not found. Something is wrong."
+    echo "  Trying to reinstall python3-venv..."
+    sudo apt install --reinstall python3-venv "python${PYTHON_VERSION}-venv" -y 2>/dev/null
+    rm -rf "$VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+fi
+
 source "$VENV_DIR/bin/activate"
-echo "  ✓ Activated: $(which python)"
+
+# Verify python is from venv
+WHICH_PYTHON=$(which python)
+if [[ "$WHICH_PYTHON" == *"$VENV_DIR"* ]]; then
+    echo "  ✓ Activated: $WHICH_PYTHON"
+else
+    echo "  ⚠️ Warning: python might not be from venv: $WHICH_PYTHON"
+    echo "  Using explicit venv path instead..."
+    export PATH="$VENV_DIR/bin:$PATH"
+    echo "  ✓ Forced venv PATH: $(which python)"
+fi
 
 # ── Install dependencies ────────────────────────────────
 echo ""
@@ -88,6 +202,13 @@ pip install --upgrade pip setuptools wheel -q 2>/dev/null
 pip install -e "$BASE_DIR/xrp-feature-engine" -q 2>/dev/null
 pip install -r "$BASE_DIR/xrp-execution-engine/requirements.txt" -q 2>/dev/null
 echo "  ✓ All dependencies installed"
+
+# Quick sanity check
+echo ""
+echo "  Verifying key packages..."
+python -c "import numpy; print('  ✓ numpy', numpy.__version__)" 2>/dev/null || echo "  ❌ numpy missing"
+python -c "import flask; print('  ✓ flask', flask.__version__)" 2>/dev/null || echo "  ❌ flask missing"
+python -c "import pandas; print('  ✓ pandas', pandas.__version__)" 2>/dev/null || echo "  ❌ pandas missing"
 
 # ── Check model weights ────────────────────────────────
 echo ""
