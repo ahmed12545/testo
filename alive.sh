@@ -2,16 +2,17 @@
 
 LOG="/tmp/bot_output.log"
 SESSION="bot"
+DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$1" in
 
   start)
     tmux kill-session -t "$SESSION" 2>/dev/null
     > "$LOG"
-    tmux new-session -d -s "$SESSION" "bash /path/to/botstart.sh 2>&1 | tee $LOG"
+    tmux new-session -d -s "$SESSION" "cd $DIR && bash ./botstart.sh 2>&1 | tee $LOG"
     echo "Bot started. Now run:"
-    echo "  ./bot.sh watch    - see everything"
-    echo "  ./bot.sh send XX  - type something"
+    echo "  ./alive.sh watch    - see everything"
+    echo "  ./alive.sh send XX  - type something"
     ;;
 
   send)
@@ -33,11 +34,11 @@ case "$1" in
     ;;
 
   *)
-    echo "./bot.sh start   - start bot"
-    echo "./bot.sh watch   - see ALL output live"
-    echo "./bot.sh log     - dump full log"
-    echo "./bot.sh send X  - send input"
-    echo "./bot.sh stop    - kill bot"
+    echo "./alive.sh start   - start bot"
+    echo "./alive.sh watch   - see ALL output live"
+    echo "./alive.sh log     - dump full log"
+    echo "./alive.sh send X  - send input"
+    echo "./alive.sh stop    - kill bot"
     ;;
 
 esac
