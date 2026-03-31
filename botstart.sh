@@ -16,10 +16,17 @@ read -p "  GitHub username: " GITHUB_USER
 read -p "  Ngrok auth token: " NGROK_TOKEN
 echo ""
 
+# ── Save credentials for stage 2 ───────────────────────
+cat > /tmp/bot_credentials.sh << EOF
+export GITHUB_TOKEN="$GITHUB_TOKEN"
+export GITHUB_USER="$GITHUB_USER"
+export NGROK_TOKEN="$NGROK_TOKEN"
+export BASE_DIR="$BASE_DIR"
+EOF
+
 # ── Check/Install system packages ──────────────────────
 echo "  Checking system packages..."
 
-# Get Python version
 PYTHON_VERSION=$(python3 --version 2>/dev/null | awk '{print $2}' | cut -d. -f1,2 || true)
 
 if [ -z "$PYTHON_VERSION" ]; then
@@ -30,7 +37,6 @@ if [ -z "$PYTHON_VERSION" ]; then
 fi
 echo "  ✓ Python $PYTHON_VERSION found"
 
-# Check and install python3-venv
 if ! dpkg -l | grep -q "python3-venv\|python${PYTHON_VERSION}-venv"; then
     echo "  ❌ python3-venv not found. Installing..."
     sudo apt update
@@ -40,7 +46,6 @@ else
     echo "  ✓ python3-venv found"
 fi
 
-# Check and install python3-pip
 if ! command -v pip3 &> /dev/null; then
     echo "  ❌ pip3 not found. Installing..."
     sudo apt update
@@ -50,7 +55,6 @@ else
     echo "  ✓ pip3 found"
 fi
 
-# Check and install python3-dev (needed for some packages like numpy)
 if ! dpkg -l | grep -q "python3-dev\|python${PYTHON_VERSION}-dev"; then
     echo "  ❌ python3-dev not found. Installing..."
     sudo apt install python3-dev "python${PYTHON_VERSION}-dev" -y 2>/dev/null || sudo apt install python3-dev -y
@@ -59,7 +63,6 @@ else
     echo "  ✓ python3-dev found"
 fi
 
-# Check and install build-essential (needed for compiling some pip packages)
 if ! dpkg -l | grep -q "build-essential"; then
     echo "  ❌ build-essential not found. Installing..."
     sudo apt install build-essential -y
@@ -68,7 +71,6 @@ else
     echo "  ✓ build-essential found"
 fi
 
-# Check and install curl
 if ! command -v curl &> /dev/null; then
     echo "  ❌ curl not found. Installing..."
     sudo apt install curl -y
@@ -77,7 +79,6 @@ else
     echo "  ✓ curl found"
 fi
 
-# Check and install lsof
 if ! command -v lsof &> /dev/null; then
     echo "  ❌ lsof not found. Installing..."
     sudo apt install lsof -y
@@ -86,13 +87,20 @@ else
     echo "  ✓ lsof found"
 fi
 
-# Check and install git
 if ! command -v git &> /dev/null; then
     echo "  ❌ git not found. Installing..."
     sudo apt install git -y
     echo "  ✓ git installed"
 else
     echo "  ✓ git found"
+fi
+
+if ! command -v tmux &> /dev/null; then
+    echo "  ❌ tmux not found. Installing..."
+    sudo apt install tmux -y
+    echo "  ✓ tmux installed"
+else
+    echo "  ✓ tmux found"
 fi
 
 echo ""
@@ -150,7 +158,6 @@ echo "  Setting up virtual environment..."
 
 VENV_DIR="$BASE_DIR/venv"
 
-# If venv exists but is broken, remove it and recreate
 if [ -d "$VENV_DIR" ]; then
     if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
         echo "  ⚠️ Existing venv is broken. Removing..."
@@ -172,7 +179,6 @@ else
     echo "  ✓ Virtual environment exists"
 fi
 
-# Verify activation works
 if [ ! -f "$VENV_DIR/bin/activate" ]; then
     echo "  ❌ venv activate script not found. Something is wrong."
     echo "  Trying to reinstall python3-venv..."
@@ -183,13 +189,11 @@ fi
 
 source "$VENV_DIR/bin/activate"
 
-# Verify python is from venv
 WHICH_PYTHON=$(which python)
 if [[ "$WHICH_PYTHON" == *"$VENV_DIR"* ]]; then
     echo "  ✓ Activated: $WHICH_PYTHON"
 else
     echo "  ⚠️ Warning: python might not be from venv: $WHICH_PYTHON"
-    echo "  Using explicit venv path instead..."
     export PATH="$VENV_DIR/bin:$PATH"
     echo "  ✓ Forced venv PATH: $(which python)"
 fi
@@ -203,7 +207,6 @@ pip install -e "$BASE_DIR/xrp-feature-engine" -q 2>/dev/null
 pip install -r "$BASE_DIR/xrp-execution-engine/requirements.txt" -q 2>/dev/null
 echo "  ✓ All dependencies installed"
 
-# Quick sanity check
 echo ""
 echo "  Verifying key packages..."
 python -c "import numpy; print('  ✓ numpy', numpy.__version__)" 2>/dev/null || echo "  ❌ numpy missing"
@@ -232,15 +235,41 @@ if [ "$ALL_GOOD" -eq 0 ]; then
     echo "  ⚠️ Some weights missing. Run Kaggle training cell first."
 fi
 
-# ── Set environment ─────────────────────────────────────
+# ── Stage 1 complete ────────────────────────────────────
+echo ""
+echo "=================================================="
+echo "  ✅ INSTALLATION COMPLETE"
+echo "  Launching services in tmux session 'bot'..."
+echo "=================================================="
+echo ""
+
+# ── Kill old tmux session if exists ─────────────────────
+tmux kill-session -t bot 2>/dev/null
+
+# ── Create stage 2 script ──────────────────────────────
+cat > /tmp/bot_stage2.sh << 'STAGE2_EOF'
+#!/bin/bash
+
+source /tmp/bot_credentials.sh
+VENV_DIR="$BASE_DIR/venv"
+source "$VENV_DIR/bin/activate"
 export FEATURE_ENGINE_PATH="$BASE_DIR/xrp-feature-engine"
 
-# ── Start web dashboard silently ────────────────────────
-echo ""
-echo "  Starting dashboard..."
+LOG="/tmp/bot_output.log"
+> "$LOG"
 
+exec > >(tee -a "$LOG") 2>&1
+
+echo ""
+echo "=================================================="
+echo "  STAGE 2 — Services Starting (inside tmux)"
+echo "=================================================="
+echo ""
+
+# ── Start web dashboard ────────────────────────────────
+echo "  Starting dashboard..."
 cd "$BASE_DIR/xrp-execution-engine/web"
-python app.py > /dev/null 2>&1 &
+python -u app.py > /dev/null 2>&1 &
 WEB_PID=$!
 cd "$BASE_DIR"
 sleep 2
@@ -260,7 +289,6 @@ ngrok http $WEB_PORT --log=stdout > /tmp/ngrok.log 2>&1 &
 NGROK_PID=$!
 sleep 3
 
-# Get the public URL from ngrok API
 NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python -c "
 import sys, json
 try:
@@ -280,25 +308,24 @@ fi
 # ── Summary ─────────────────────────────────────────────
 echo ""
 echo "=================================================="
-echo "  SETUP COMPLETE"
+echo "  🚀 ALL SERVICES RUNNING"
 echo "=================================================="
 echo "  Directory:   $BASE_DIR"
 echo "  Local:       http://localhost:$WEB_PORT"
 echo "  Public:      $NGROK_URL"
-echo "  Password:    $(cat $BASE_DIR/xrp-execution-engine/config/password.txt)"
+echo "  Password:    $(cat $BASE_DIR/xrp-execution-engine/config/password.txt 2>/dev/null || echo 'not found')"
 echo "=================================================="
 echo ""
 echo "  👉 Open the Public URL on your phone!"
 echo ""
 echo "  Starting engine..."
 echo ""
-
-# ── Start engine (only engine output visible) ───────────
 echo "=================================================="
 echo "  ENGINE OUTPUT"
 echo "=================================================="
 echo ""
 
+# ── Start engine ────────────────────────────────────────
 cd "$BASE_DIR/xrp-execution-engine/engine"
 
 cleanup() {
@@ -314,6 +341,53 @@ cleanup() {
 
 trap cleanup INT TERM
 
-python runner.py
+python -u runner.py
 
 cleanup
+STAGE2_EOF
+
+chmod +x /tmp/bot_stage2.sh
+
+# ── Launch stage 2 in tmux ──────────────────────────────
+tmux new-session -d -s bot "bash /tmp/bot_stage2.sh"
+
+# ── Wait for output and print it ────────────────────────
+echo "  Waiting for services to start..."
+echo ""
+
+# Wait for the log file to exist
+for i in $(seq 1 10); do
+    if [ -f /tmp/bot_output.log ] && [ -s /tmp/bot_output.log ]; then
+        break
+    fi
+    sleep 1
+done
+
+# Wait for the summary block to appear (up to 60 seconds)
+for i in $(seq 1 60); do
+    if grep -q "ALL SERVICES RUNNING" /tmp/bot_output.log 2>/dev/null; then
+        break
+    fi
+    sleep 1
+    printf "."
+done
+echo ""
+
+# Print everything from stage 2
+echo ""
+cat /tmp/bot_output.log
+echo ""
+echo "=================================================="
+echo "  ✅ Bot is running inside tmux session 'bot'"
+echo "  ✅ Safe to close SSH — bot will NOT die"
+echo "=================================================="
+echo ""
+echo "  Manage with alive.sh:"
+echo "    ./alive.sh watch   - see engine output live"
+echo "    ./alive.sh log     - see full log"
+echo "    ./alive.sh send X  - send input to bot"
+echo "    ./alive.sh stop    - kill everything"
+echo ""
+
+# Clean up credentials
+rm -f /tmp/bot_credentials.sh
